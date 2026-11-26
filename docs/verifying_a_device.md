@@ -31,10 +31,14 @@ One line per device, in this order:
   `2.4 GHz receiver`, `Bluetooth`, or a vendor-specific wording such as Razer's.
   A wrong wording here is a driver bug, not a device problem.
 * `{brand}` only appears for drivers that draw a coloured icon.
-* `level` is `NN%`, or `asleep`, or `off / not connected`, or `unknown`.
+* `level` is `NN%` when the driver knows a percentage, `asleep` for a device that is
+  connected but silent, `off / not connected`, `unknown`, or a driver-specific string
+  when the hardware only reports steps (some vendor protocols print their own text
+  here instead of a percentage).
 * `detail` is whatever the driver wants to expose — a step count, a connection
-  mode, a firmware string. FlyDigi pads show `3/5` here because the pad only
-  knows steps, and the percentage is derived from them.
+  mode, a firmware string. FlyDigi pads show `3/6 levels` over the vendor service
+  pipe and `3/5 steps` over the DInput collection: the pad only reports steps, and
+  the percentage is derived from them.
 * `key` identifies the device inside the app (`pmo:3002`, `razer:00B9`,
   `bt:{container-guid}`). It is the quickest way to tell whether two runs are
   talking about the same physical device.
