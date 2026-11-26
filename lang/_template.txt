@@ -114,3 +114,6 @@ USB base station =
 USB cable = 
 UWB base station = 
 Wireless adapter = 
+Opening the GitHub issue page in your browser. Press Submit there to send it. = 
+The GitHub page is open, but the report was too long to prefill, so it's on the clipboard - paste it into the body. = 
+Couldn't open the browser. Use "Copy full report" and paste it into a new issue on GitHub. = 
