@@ -23,6 +23,10 @@ Please open an issue with:
 - the output of `WirelessBattery.exe --dump`
 - what the vendor's own software shows as the battery level
 
+[docs/verifying_a_device.md](docs/verifying_a_device.md) walks through the same
+steps in more detail, including how to read the level Windows itself caches and
+what each `--dump` column means.
+
 ## Adding a device
 
 1. Run `WirelessBattery.exe --dump` and find your device's vendor and product IDs, and the

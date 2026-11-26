@@ -90,9 +90,19 @@ Two findings worth knowing before building anything on top of this:
   gamepad collection (usage page 1) and no `0xFFA0`. The service does not
   enumerate it:
   `GetConnectedDevices` answers `08 81 20 10 01 2a 00`, i.e. `field5` with
-  length 0. Windows also exposes no `DEVPKEY_Device_BatteryLevel` for the node.
-  So `connectType == 3` is currently unreachable, and no level can be produced
-  in Bluetooth mode.
+  length 0. So `connectType == 3` is currently unreachable through the pipe.
+
+  Windows does keep a level for the BLE node, and it is worth knowing why this
+  driver ignores it: `DEVPKEY_Device_BatteryLevel` (read by property GUID — the
+  node's property list does not show it) answered `99%` while the pad itself
+  reported `4/6` steps over the cable and the receiver in the same hour. That is
+  a cache written on the last connection, not a live measurement, and the generic
+  Bluetooth path only lists the node while it is connected. Nothing here is built
+  on that value.
+
+  A previous version of this document claimed Windows exposed no battery level
+  for the node. That was wrong: the level exists, it is simply a cache. See
+  `docs/verifying_a_device.md` for how to read it.
 
 ### Dumping the pipe reply yourself
 
@@ -134,7 +144,8 @@ derived.)
   device found through it is labelled "FlyDigi Vader 4 Pro".
 * Bluetooth mode is not covered by either path: the service does not enumerate
   the pad there and the DInput collection only exists in DInput mode. The pad
-  can still be reported by the generic XInput path, but without a real level.
+  can still be reported by the generic XInput path, or by the generic Bluetooth
+  path from the Windows cache, but neither gives a live level.
 * Charging state is unknown on both paths; the DInput collection only reports
   it as a level value of `6`.
 * If neither the service nor the DInput collection is available, the pad falls
