@@ -8,7 +8,7 @@ Unicode true
 
 !define APP_NAME        "无线设备电量监视器 CN"
 !define APP_ID          "Wireless-Device-Battery-Monitor-CN"
-!define APP_VERSION     "1.0.5"
+!define APP_VERSION     "1.0.6"
 !define APP_EXE         "WirelessBattery.exe"
 !define APP_PUBLISHER   "Wireless-Device-Battery-Monitor-CN contributors"
 !define APP_URL         "https://github.com/fuyue521/Wireless-Device-Battery-Monitor-CN"
