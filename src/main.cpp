@@ -765,7 +765,19 @@ void ShowMenu() {
     // ~30 px at 150% while a popup row is ~35 px), so the only way to avoid it is to open upwards with a full
     // row of clearance; downwards the menu still starts at the pointer, unchanged. The shell still decides;
     // nothing here estimates the menu's own height.
-    const int rowH = GetSystemMetricsForDpi(SM_CYMENU, GetDpiForWindow(g_hwnd));
+    //
+    // Trade-off, deliberate: when the menu is taller than the space above AND below the pointer (many devices
+    // or languages), the shell clamps it to the work area and it does cover the pointer again. That is
+    // accepted, because "Exit" is the menu's last row and then sits 400+ px away from the pointer (this menu
+    // is ~1089 px in a 1528 px work area), so a stray click hits a toggle at worst, never Exit. Getting the
+    // pointer out of the menu in that case as well would mean giving up the full-row clearance when the menu
+    // flips - and the flip is the case users actually hit. Do not "fix" the full-width box without measuring
+    // both cases again.
+    UINT dpi = 0;  // the menu opens on the pointer's monitor, which is not necessarily the tray's
+    if (HWND under = WindowFromPoint(pt)) dpi = GetDpiForWindow(under);
+    if (!dpi) dpi = GetDpiForWindow(g_hwnd);
+    if (!dpi) dpi = GetDpiForSystem();
+    const int rowH = GetSystemMetricsForDpi(SM_CYMENU, dpi);
     MONITORINFO mi{ sizeof(mi) };
     const RECT mon = GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi) ? mi.rcMonitor : RECT{ 0, 0, 0, 0 };
     TPMPARAMS tpm{};
