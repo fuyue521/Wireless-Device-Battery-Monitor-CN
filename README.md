@@ -144,14 +144,20 @@ GPLv3 的授权是永久且不可撤销的，上游仓库下线不影响本分�
 
 ## 构建
 
-需要 C++17 编译器（MSYS2 MinGW-w64 或任何支持 Win32 的 g++），无第三方库。
+需要 MSYS2 的 MinGW-w64 工具链（支持 C++17 的 g++、`windres`、`make`），无第三方库。
+PATH 上还可能有别的旧版 g++（例如 6.3.0，会拒绝 C++17），而且 `make` 默认不在 PATH 上，
+所以每条构建命令前先切到 MSYS2：
+
+```powershell
+$env:PATH='C:\msys64\mingw64\bin;C:\msys64\usr\bin;'+$env:PATH
+```
 
 ```bat
-:: cmd / MSYS2，产出 WirelessBattery.exe
+:: 产出 WirelessBattery.exe（需要上面 PATH 里的 g++ 与 windres）
 build.bat
 ```
 
-或使用 Makefile：
+或使用 Makefile（`make` 也在上面 PATH 的 `C:\msys64\usr\bin` 里）：
 
 ```bash
 make          # 编译
@@ -213,15 +219,16 @@ Wireless-Device-Battery-Monitor-CN/
 
 ## 上传到 GitHub
 
+这个目录已经是 git 仓库（`git log` 里有提交），**不要再 `git init`**——那会在里面嵌套一个空仓库，
+`git add .` 收不到任何历史。只需要补上远端并推送：
+
 ```bash
-cd Wireless-Device-Battery-Monitor-CN
-git init
-git add .
-git commit -m "简体中文本地化：默认中文界面、词条校订、NSIS 中文安装包"
-git branch -M main
 git remote add origin https://github.com/<你的用户名>/Wireless-Device-Battery-Monitor-CN.git
 git push -u origin main
 ```
+
+远端已经存在就改用 `git remote set-url origin <地址>`。只有在一个空目录里重新开始时才用
+`git clone <地址> .` 取回仓库，而不是在已有仓库里 init。
 
 `.gitignore` 已排除 `*.exe`、`dist/`、`build/`、`third_party/`，因此仓库里只有源码；安装包请作为 Release 附件上传。
 建议在仓库描述里写清："Simplified Chinese fork of krisgfx/Wireless-Device-Battery-Monitor"。

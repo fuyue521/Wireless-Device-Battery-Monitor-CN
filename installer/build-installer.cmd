@@ -42,10 +42,19 @@ if /i not "%ACT%"=="%HCSHA%" (
     exit /b 1
 )
 
+rem The installer name comes from APP_VERSION in the .nsi, so it can never drift from the package.
+rem ("!" in the pattern would be eaten by delayed expansion, so match on "define APP_VERSION" only.)
+set APPVER=
+for /f "tokens=3" %%v in ('findstr /c:"define APP_VERSION" "installer\Wireless-Device-Battery-Monitor-CN.nsi"') do set APPVER=%%~v
+if not defined APPVER (
+    echo [error] Could not read APP_VERSION from installer\Wireless-Device-Battery-Monitor-CN.nsi.
+    exit /b 1
+)
+
 if not exist "dist" mkdir "dist"
 echo [2/2] Running makensis ...
 makensis "installer\Wireless-Device-Battery-Monitor-CN.nsi"
 if errorlevel 1 exit /b 1
 
 echo.
-echo Done: dist\Wireless-Device-Battery-Monitor-CN-Setup-1.0.0.exe
+echo Done: dist\Wireless-Device-Battery-Monitor-CN-Setup-%APPVER%.exe
