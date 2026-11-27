@@ -757,8 +757,17 @@ void ShowMenu() {
     POINT pt;
     GetCursorPos(&pt);
     SetForegroundWindow(g_hwnd);
-    UINT cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | (i18n::Rtl() ? TPM_LAYOUTRTL : 0), pt.x, pt.y, 0,
-                              g_hwnd, nullptr);
+    // TrackPopupMenu anchors the menu at the pointer and turns it upside down when it does not fit below the
+    // screen edge; after that flip the last item ("Exit") sits right under the still pointer, and a second
+    // click there quits the program - which looks like a crash. Excluding the pointer's own few pixels makes
+    // Windows place the menu on one side of that box instead of over it, so a click without moving lands
+    // outside the menu (or on the first item when the menu opens downwards, as before). No height estimate:
+    // the shell does the layout, so this holds at any DPI and on any taskbar edge.
+    TPMPARAMS tpm{};
+    tpm.cbSize = sizeof(tpm);
+    tpm.rcExclude = { pt.x, pt.y, pt.x + 2, pt.y + 2 };
+    UINT cmd = TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | (i18n::Rtl() ? TPM_LAYOUTRTL : 0),
+                                pt.x, pt.y, g_hwnd, &tpm);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
     DestroyMenu(m);
     switch (cmd) {
