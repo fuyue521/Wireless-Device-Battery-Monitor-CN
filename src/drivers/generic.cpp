@@ -125,6 +125,12 @@ void PollGenericHid(PollContext& ctx) {
         PHIDP_PREPARSED_DATA pp;
         if (!HidD_GetPreparsedData(h, &pp)) { CloseHandle(h); continue; }
 
+        // The two control transfers run through HidDev so they get hid.cpp's 1000 ms deadline:
+        // HidD_GetFeature/GetInputReport have no timeout, and one hung receiver would pin the only
+        // polling thread. The raw handle above stays for HidD_GetPreparsedData and the local HidP_*
+        // parsing, which never touches the device. This opens each such collection twice; keeping a
+        // single handle would need driver-specific state on HidDev.
+        HidDev dev;
         int pct = -1;
         for (HIDP_REPORT_TYPE type : { HidP_Feature, HidP_Input }) {
             USHORT n = type == HidP_Feature ? c.caps.NumberFeatureValueCaps : c.caps.NumberInputValueCaps;
@@ -132,16 +138,17 @@ void PollGenericHid(PollContext& ctx) {
             if (!n || !len) continue;
             std::vector<HIDP_VALUE_CAPS> vc(n);
             if (HidP_GetValueCaps(type, vc.data(), &n, pp) != HIDP_STATUS_SUCCESS) continue;
+            bool openFailed = false;
             for (USHORT i = 0; i < n && pct < 0; i++) {
                 const auto& v = vc[i];
                 USAGE u = v.IsRange ? v.Range.UsageMin : v.NotRange.Usage;
                 if (!IsBatteryUsage(v.UsagePage, u)) continue;
-                std::vector<BYTE> buf(len, 0);
-                buf[0] = v.ReportID;
-                BOOL got = type == HidP_Feature ? HidD_GetFeature(h, buf.data(), len) : HidD_GetInputReport(h, buf.data(), len);
+                if (!dev.ok() && !dev.OpenFeatureOnly(c)) { openFailed = true; break; }
+                std::vector<BYTE> buf;
+                bool got = type == HidP_Feature ? dev.GetFeature(v.ReportID, buf) : dev.GetInputReport(v.ReportID, buf);
                 if (!got) continue;
                 ULONG val = 0;
-                if (HidP_GetUsageValue(type, v.UsagePage, v.LinkCollection, u, &val, pp, (PCHAR)buf.data(), len) != HIDP_STATUS_SUCCESS)
+                if (HidP_GetUsageValue(type, v.UsagePage, v.LinkCollection, u, &val, pp, (PCHAR)buf.data(), (ULONG)buf.size()) != HIDP_STATUS_SUCCESS)
                     continue;
                 // Apple devices (Magic Trackpad / Mouse / Keyboard) report a plain percentage while
                 // declaring a 0-255 range; Linux handles them with HID_BATTERY_QUIRK_PERCENT.
@@ -150,6 +157,7 @@ void PollGenericHid(PollContext& ctx) {
                 else if (v.LogicalMax > v.LogicalMin) pct = Clamp100((int)(((LONG)val - v.LogicalMin) * 100 / (v.LogicalMax - v.LogicalMin)));
                 else if (val <= 100) pct = (int)val;
             }
+            if (openFailed) break;
             if (pct >= 0) break;
         }
         HidD_FreePreparsedData(pp);
