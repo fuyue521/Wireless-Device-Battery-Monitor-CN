@@ -408,6 +408,7 @@ void UpdatePlaceholder() {
     for (auto& [k, e] : g_entries) any |= e.added;
     if (!any && !g_placeholder) {
         if (!g_placeholderIcon) g_placeholderIcon = RenderIcon(L"-", -1, Foreground(), Foreground(), true);
+        if (!g_placeholderIcon) return;  // GDI exhausted: leave the tray alone and try again on the next tick
         TrayCall(NIM_ADD, PLACEHOLDER_ID, g_placeholderIcon, std::wstring(L"无线设备电量\n") + T(L"No devices with battery info found"));
         g_placeholder = true;
     } else if (any && g_placeholder) {
