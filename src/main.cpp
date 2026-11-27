@@ -969,7 +969,9 @@ int ListToConsole(bool dump) {
             std::string u = "\xEF\xBB\xBF" + std::string(n, 0);  // UTF-8 byte order mark, so Notepad shows it right
             WideCharToMultiByte(CP_UTF8, 0, crlf.c_str(), (int)crlf.size(), u.data() + 3, n, nullptr, nullptr);
             DWORD w;
-            saved = WriteFile(f, u.data(), (DWORD)u.size(), &w, nullptr) != 0;
+            // A short write (disk full, quota) must not count as saved either: the whole point is to stop
+            // claiming success when the bytes did not land.
+            saved = WriteFile(f, u.data(), (DWORD)u.size(), &w, nullptr) != 0 && w == (DWORD)u.size();
             CloseHandle(f);
         }
         if (out && out != INVALID_HANDLE_VALUE) {
