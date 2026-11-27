@@ -757,8 +757,34 @@ void ShowMenu() {
     POINT pt;
     GetCursorPos(&pt);
     SetForegroundWindow(g_hwnd);
-    UINT cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | (i18n::Rtl() ? TPM_LAYOUTRTL : 0), pt.x, pt.y, 0,
-                              g_hwnd, nullptr);
+    // TrackPopupMenu anchors the menu at the pointer and turns it upside down when it does not fit below the
+    // screen edge; after that flip the last item ("Exit") sits right under the still pointer, and a click that
+    // slips 2-5 px lands on it and quits the program - which looks like a crash. A pointer-sized exclusion is
+    // not enough: the shell then just nudges the menu sideways and it still hugs the pointer. The box below
+    // spans the whole monitor and two menu-bar rows ABOVE the pointer (one row is not enough - SM_CYMENU is
+    // ~30 px at 150% while a popup row is ~35 px), so the only way to avoid it is to open upwards with a full
+    // row of clearance; downwards the menu still starts at the pointer, unchanged. The shell still decides;
+    // nothing here estimates the menu's own height.
+    //
+    // Trade-off, deliberate: when the menu is taller than the space above AND below the pointer (many devices
+    // or languages), the shell clamps it to the work area and it does cover the pointer again. That is
+    // accepted, because "Exit" is the menu's last row and then sits 400+ px away from the pointer (this menu
+    // is ~1089 px in a 1528 px work area), so a stray click hits a toggle at worst, never Exit. Getting the
+    // pointer out of the menu in that case as well would mean giving up the full-row clearance when the menu
+    // flips - and the flip is the case users actually hit. Do not "fix" the full-width box without measuring
+    // both cases again.
+    UINT dpi = 0;  // the menu opens on the pointer's monitor, which is not necessarily the tray's
+    if (HWND under = WindowFromPoint(pt)) dpi = GetDpiForWindow(under);
+    if (!dpi) dpi = GetDpiForWindow(g_hwnd);
+    if (!dpi) dpi = GetDpiForSystem();
+    const int rowH = GetSystemMetricsForDpi(SM_CYMENU, dpi);
+    MONITORINFO mi{ sizeof(mi) };
+    const RECT mon = GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi) ? mi.rcMonitor : RECT{ 0, 0, 0, 0 };
+    TPMPARAMS tpm{};
+    tpm.cbSize = sizeof(tpm);
+    tpm.rcExclude = { mon.left, pt.y - 2 * rowH, mon.right, pt.y };
+    UINT cmd = TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | (i18n::Rtl() ? TPM_LAYOUTRTL : 0),
+                                pt.x, pt.y, g_hwnd, &tpm);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
     DestroyMenu(m);
     switch (cmd) {
