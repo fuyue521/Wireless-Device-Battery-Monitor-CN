@@ -27,6 +27,9 @@ HINSTANCE g_inst;
 // (g_animFrom) is still drawn on its way out and the new one (g_animTo) slides in.
 bool g_single = true;
 int g_index = 0;
+// Identity of the device on screen, kept across SetItems and Destroy so a list change or a re-created strip
+// does not silently show a different device. g_index is only ever a position; this is the real answer.
+std::wstring g_shownKey;
 int g_animFrom = -1, g_animTo = -1, g_animDir = 1;
 ULONGLONG g_animStart = 0;
 const UINT kAnimTimer = 1;              // WM_TIMER id that drives the slide
@@ -637,6 +640,24 @@ int CurrentIndex() {
     return std::clamp(g_index, 0, (int)g_items.size() - 1);
 }
 
+// The one place g_index changes on purpose. g_index is a position, so it is useless once the list moves;
+// g_shownKey is what "the device the user is looking at" actually means. An empty list leaves the key alone
+// so a poll that briefly finds nothing does not make the strip forget the device.
+int IndexOfKey(const std::wstring& key) {
+    for (int i = 0; i < (int)g_items.size(); i++)
+        if (g_items[i].key == key) return i;
+    return -1;
+}
+
+void SetCurrentDevice(int index) {
+    if (g_items.empty()) {
+        g_index = 0;
+        return;
+    }
+    g_index = std::clamp(index, 0, (int)g_items.size() - 1);
+    g_shownKey = g_items[g_index].key;
+}
+
 // One device forward (+1) or back (-1), with the slide. The wheel walks the same order as the menu.
 void PaintStrip(HWND wnd, HWND taskbar, bool hover, SIZE& size);
 void PaintMirror(Mirror& m);
@@ -652,7 +673,7 @@ void CycleDevice(int step) {
     g_animDir = step > 0 ? 1 : -1;
     g_animStart = GetTickCount64();
     if (!g_animStart) g_animStart = 1;  // 0 means "no slide"
-    g_index = to;
+    SetCurrentDevice(to);
     if (g_wnd) SetTimer(g_wnd, kAnimTimer, 15, nullptr);
     for (auto& m : g_mirrors) PaintMirror(m);
     if (g_wnd) PaintStrip(g_wnd, g_taskbar, g_hover, g_size);
@@ -1138,6 +1159,8 @@ void Destroy() {
     g_hover = false;
     g_animStart = 0;
     g_animFrom = g_animTo = -1;
+    // g_shownKey deliberately survives: the strip is re-created on every Explorer restart, and the user does
+    // not expect that to send them back to the first device.
     g_index = 0;
 }
 
@@ -1151,7 +1174,11 @@ void SetItems(const std::vector<WidgetItem>& items, const std::wstring& tooltip)
         g_animFrom = g_animTo = -1;
         if (g_wnd) KillTimer(g_wnd, kAnimTimer);
     }
-    g_index = g_items.empty() ? 0 : std::clamp(g_index, 0, (int)g_items.size() - 1);
+    // Keep showing the same device: the list may have gained, lost or reordered entries (a device sorted in
+    // front of the one on screen used to take its place silently). Only when that device is really gone does
+    // the old position-based clamp decide, and the remembered key follows whatever is shown instead.
+    const int found = g_shownKey.empty() ? -1 : IndexOfKey(g_shownKey);
+    SetCurrentDevice(found >= 0 ? found : g_index);
     if (tooltip != g_tipText && g_tip) {
         g_tipText = tooltip;
         TTTOOLINFOW ti{ sizeof(ti) };
@@ -1190,7 +1217,8 @@ void SetSingleDevice(bool on) {
     g_single = on;
     g_animStart = 0;
     g_animFrom = g_animTo = -1;
-    g_index = 0;
+    // Switching the mode back on keeps the device the user was looking at, when it is still in the list.
+    SetCurrentDevice(g_shownKey.empty() ? 0 : IndexOfKey(g_shownKey));
     if (g_wnd) KillTimer(g_wnd, kAnimTimer);
     UpdateWheelHook();
     PaintAll();

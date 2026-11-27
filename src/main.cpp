@@ -473,6 +473,7 @@ void UpdateWidget() {
     std::wstring tip;
     for (auto* e : list) {
         WidgetItem it;
+        it.key = e->st.key;
         it.kind = e->st.kind;
         it.percent = e->st.percent >= 0 ? e->st.percent : e->lastPct;
         if (e->st.percent >= 0) it.text = T(e->st.levelText);
