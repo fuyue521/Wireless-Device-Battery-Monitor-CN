@@ -56,6 +56,44 @@ std::vector<HidColl> EnumHid() {
 
 // ---- HidDev -----------------------------------------------------------------------------------
 
+namespace {
+
+// Deadline for one feature / input-report control transfer. A receiver that stops answering leaves
+// the transfer pending in the HID class driver, and HidD_SetFeature/GetFeature/GetInputReport have no
+// timeout at all; the polling thread is the only producer of readings and the only consumer of
+// "refresh now", so one such call freezes every icon and the exit path. Measured on this machine:
+// warm transfers take 8-55 ms, but the first transfer after an idle period on the wireless mouse (BT
+// link wake-up) takes 244-390 ms, so the 200 ms GetFeatureByte used here would fail a healthy device.
+// 1000 ms is ~2.5x the slowest measured transfer and still bounds a dead receiver to one second per
+// call instead of forever.
+constexpr DWORD kCtrlTimeoutMs = 1000;
+
+// Runs one HID IOCTL as an overlapped transfer and aborts it after kCtrlTimeoutMs. Returns true only
+// when the request actually completed; a timed-out request is a failure, never retried here.
+// CancelIoEx(h, &ov) cancels this OVERLAPPED only, so a read armed by SetOutputAndRead on the same
+// handle keeps running. On timeout GetOverlappedResult(TRUE) waits for the aborted request to be
+// reaped, because the OVERLAPPED/event must outlive it (the same sequence GetFeatureByte has used).
+bool HidIoctl(HANDLE h, DWORD code, void* in, DWORD inLen, void* out, DWORD outLen, DWORD* returned) {
+    DWORD ignored = 0;
+    if (!returned) returned = &ignored;
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) return false;
+    BOOL done = DeviceIoControl(h, code, in, inLen, out, outLen, returned, &ov);
+    if (!done && GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(ov.hEvent, kCtrlTimeoutMs) == WAIT_OBJECT_0) {
+            done = GetOverlappedResult(h, &ov, returned, FALSE);
+        } else {
+            CancelIoEx(h, &ov);
+            done = GetOverlappedResult(h, &ov, returned, TRUE);  // it may have completed meanwhile
+        }
+    }
+    CloseHandle(ov.hEvent);
+    return done != FALSE;
+}
+
+}  // namespace
+
 bool HidDev::Open(const HidColl& c) {
     Close();
     c_ = c;
@@ -76,8 +114,14 @@ bool HidDev::OpenReadOnly(const HidColl& c) {
 bool HidDev::OpenFeatureOnly(const HidColl& c) {
     Close();
     c_ = c;
-    h_ = CreateFileW(c.path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-    overlapped_ = false;
+    // Zero access is what makes feature reports usable on collections another app holds, and it stays
+    // zero. FILE_FLAG_OVERLAPPED is required for the deadline in SetFeature/GetFeature/GetInputReport:
+    // those run as overlapped IOCTLs so a hung control transfer can be cancelled, and without the flag
+    // every DeviceIoControl with an OVERLAPPED fails with ERROR_INVALID_PARAMETER. The access mask does
+    // not change, so the same collections open as before (checked on real hardware, see the Task).
+    h_ = CreateFileW(c.path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                     FILE_FLAG_OVERLAPPED, nullptr);
+    overlapped_ = true;
     return ok();
 }
 
@@ -98,7 +142,7 @@ bool HidDev::Write(const std::vector<BYTE>& data, int timeoutMs) {
         if (WaitForSingleObject(ov.hEvent, (DWORD)timeoutMs) == WAIT_OBJECT_0) {
             done = GetOverlappedResult(h_, &ov, &n, FALSE) != FALSE;
         } else {
-            CancelIo(h_);
+            CancelIoEx(h_, &ov);  // this transfer only; the handle may have other pending I/O
             done = GetOverlappedResult(h_, &ov, &n, TRUE) != FALSE;
         }
     }
@@ -117,7 +161,7 @@ int HidDev::Read(std::vector<BYTE>& buf, int timeoutMs) {
         if (timeoutMs > 0 && WaitForSingleObject(ov.hEvent, (DWORD)timeoutMs) == WAIT_OBJECT_0) {
             done = GetOverlappedResult(h_, &ov, &got, FALSE) != FALSE;
         } else {
-            CancelIo(h_);
+            CancelIoEx(h_, &ov);  // this transfer only; the handle may have other pending I/O
             done = GetOverlappedResult(h_, &ov, &got, TRUE) != FALSE;  // it may have completed meanwhile
         }
     }
@@ -138,11 +182,13 @@ int HidDev::SetOutputAndRead(const std::vector<BYTE>& data, std::vector<BYTE>& b
     DWORD got = 0;
     bool done = false;
     if (ReadFile(h_, tmp.data(), (DWORD)tmp.size(), nullptr, &ov) || GetLastError() == ERROR_IO_PENDING) {
-        bool sent = HidD_SetOutputReport(h_, out.data(), (ULONG)out.size()) != FALSE;
+        // HidD_SetOutputReport has no timeout either: run it through the same deadline helper so a
+        // receiver that stops ACKing cannot pin this thread before the read's own timeout starts.
+        bool sent = HidIoctl(h_, IOCTL_HID_SET_OUTPUT_REPORT, out.data(), (DWORD)out.size(), nullptr, 0, nullptr);
         if (sent && timeoutMs > 0 && WaitForSingleObject(ov.hEvent, (DWORD)timeoutMs) == WAIT_OBJECT_0) {
             done = GetOverlappedResult(h_, &ov, &got, FALSE) != FALSE;
         } else {
-            CancelIo(h_);
+            CancelIoEx(h_, &ov);  // this transfer only
             done = GetOverlappedResult(h_, &ov, &got, TRUE) != FALSE && sent;
         }
     }
@@ -158,41 +204,37 @@ void HidDev::Flush() {
 }
 
 bool HidDev::SetFeature(const std::vector<BYTE>& data) {
-    if (!ok() || !c_.featLen()) return false;
+    if (!ok() || !overlapped_ || !c_.featLen()) return false;
     std::vector<BYTE> buf(c_.featLen(), 0);
     memcpy(buf.data(), data.data(), std::min(buf.size(), data.size()));
-    return HidD_SetFeature(h_, buf.data(), (ULONG)buf.size()) != FALSE;
+    // Same request HidD_SetFeature issues (one METHOD_IN_DIRECT IOCTL, buffer = feature report), run
+    // through the deadline helper.
+    return HidIoctl(h_, IOCTL_HID_SET_FEATURE, buf.data(), (DWORD)buf.size(), nullptr, 0, nullptr);
 }
 
 bool HidDev::GetFeature(BYTE reportId, std::vector<BYTE>& out) {
-    if (!ok() || !c_.featLen()) return false;
+    if (!ok() || !overlapped_ || !c_.featLen()) return false;
     out.assign(c_.featLen(), 0);
     out[0] = reportId;
-    return HidD_GetFeature(h_, out.data(), (ULONG)out.size()) != FALSE;
+    // Same request HidD_GetFeature issues: the report ID goes in, the report comes back in the same
+    // buffer. The byte count is not part of the contract (HidD_GetFeature ignores it too).
+    return HidIoctl(h_, IOCTL_HID_GET_FEATURE, out.data(), (DWORD)out.size(), out.data(), (DWORD)out.size(), nullptr);
 }
 
 bool HidDev::GetInputReport(BYTE reportId, std::vector<BYTE>& out) {
-    if (!ok() || !c_.inLen()) return false;
+    if (!ok() || !overlapped_ || !c_.inLen()) return false;
     out.assign(c_.inLen(), 0);
     out[0] = reportId;
-    return HidD_GetInputReport(h_, out.data(), (ULONG)out.size()) != FALSE;
+    // Same request HidD_GetInputReport issues: asks the control pipe for the current input report.
+    return HidIoctl(h_, IOCTL_HID_GET_INPUT_REPORT, out.data(), (DWORD)out.size(), out.data(), (DWORD)out.size(), nullptr);
 }
 
 bool HidDev::GetFeatureByte(BYTE reportId, BYTE& value) {
     if (!ok() || !overlapped_ || !reportId || c_.featLen() < 2) return false;
     BYTE report[] = {reportId, 0xff};
-    OVERLAPPED ov{};
-    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov.hEvent) return false;
     DWORD received = 0;
-    BOOL done = DeviceIoControl(h_, IOCTL_HID_GET_FEATURE, report, sizeof(report),
-                                report, sizeof(report), &received, &ov);
-    if (!done && GetLastError() == ERROR_IO_PENDING) {
-        if (WaitForSingleObject(ov.hEvent, 200) != WAIT_OBJECT_0) CancelIoEx(h_, &ov);
-        done = GetOverlappedResult(h_, &ov, &received, TRUE);
-    }
-    CloseHandle(ov.hEvent);
-    if (!done || received != sizeof(report) || report[0] != reportId) return false;
+    if (!HidIoctl(h_, IOCTL_HID_GET_FEATURE, report, sizeof(report), report, sizeof(report), &received)) return false;
+    if (received != sizeof(report) || report[0] != reportId) return false;
     value = report[1];
     return true;
 }
@@ -200,11 +242,17 @@ bool HidDev::GetFeatureByte(BYTE reportId, BYTE& value) {
 // ---- helpers ----------------------------------------------------------------------------------
 
 std::wstring HidProduct(const HidColl& c) {
-    HANDLE h = CreateFileW(c.path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    // The product string is a control transfer too, and ~25 drivers call this while discovering
+    // devices on the polling thread. HidD_GetProductString has no timeout, so ask the class driver
+    // through the same overlapped deadline path; the access mask stays 0 like before.
+    HANDLE h = CreateFileW(c.path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_OVERLAPPED, nullptr);
     if (h == INVALID_HANDLE_VALUE) return L"";
     wchar_t name[128] = {};
-    if (!HidD_GetProductString(h, name, sizeof(name) - sizeof(wchar_t))) name[0] = 0;
+    DWORD got = 0;
+    bool ok = HidIoctl(h, IOCTL_HID_GET_PRODUCT_STRING, nullptr, 0, name, sizeof(name) - sizeof(wchar_t), &got);
     CloseHandle(h);
+    if (!ok) return L"";
     std::wstring s = name;
     while (!s.empty() && iswspace(s.back())) s.pop_back();
     return s;
