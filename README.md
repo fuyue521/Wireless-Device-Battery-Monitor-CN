@@ -110,7 +110,7 @@ GPLv3 的授权是永久且不可撤销的，上游仓库下线不影响本分�
 
 ### 方式一：安装包（推荐）
 
-1. 下载 `Wireless-Device-Battery-Monitor-CN-Setup-1.0.6.exe`（见 Releases）。
+1. 下载 `Wireless-Device-Battery-Monitor-CN-Setup-1.0.7.exe`（见 Releases）。
 2. 双击运行，按中文向导下一步即可；**不需要管理员权限**，默认安装到
    `%LOCALAPPDATA%\Programs\Wireless-Device-Battery-Monitor-CN`。
 3. 安装器可选择"开机自动启动"，装完可直接启动；卸载在"设置 → 应用"里。
@@ -172,7 +172,7 @@ make clean
 ```bat
 :: 1) 先构建出 WirelessBattery.exe
 build.bat
-:: 2) 生成 dist\Wireless-Device-Battery-Monitor-CN-Setup-1.0.6.exe
+:: 2) 生成 dist\Wireless-Device-Battery-Monitor-CN-Setup-1.0.7.exe
 installer\build-installer.cmd
 ```
 
