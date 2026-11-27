@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cwctype>
 #include <map>
 
 namespace {
@@ -79,6 +80,33 @@ std::wstring StripServiceSuffix(std::wstring n) {
         if (n.size() > l && n.compare(n.size() - l, l, suf) == 0) return n.substr(0, n.size() - l);
     }
     return n;
+}
+
+// Windows names a Bluetooth device from its own cache ("MCHOSE V9 PRO") while headsetcontrol.exe
+// prints the vendor's product string ("MCHOSE V9 Pro Wireless"), so one headset can show up under
+// two names. Fold case and runs of whitespace before comparing.
+std::wstring FoldedName(const std::wstring& n) {
+    std::wstring r;
+    for (wchar_t ch : n) {
+        if (iswspace(ch)) {
+            if (!r.empty() && r.back() != L' ') r += L' ';
+        } else {
+            r += (wchar_t)towlower(ch);
+        }
+    }
+    if (!r.empty() && r.back() == L' ') r.pop_back();
+    return r;
+}
+
+// Deliberately narrow: the shorter name must be a whole-word prefix of at least 6 characters and more
+// than a bare brand ("MCHOSE" never matches "MCHOSE V9 Pro Wireless"), so "V9 Pro" does not match
+// "V9 Pro2" either. Every rejected pair just keeps today's two rows.
+bool SameDeviceName(const std::wstring& a, const std::wstring& b) {
+    const std::wstring fa = FoldedName(a), fb = FoldedName(b);
+    const std::wstring& s = fa.size() <= fb.size() ? fa : fb;
+    const std::wstring& l = fa.size() <= fb.size() ? fb : fa;
+    return s.size() >= 6 && s.find(L' ') != std::wstring::npos && l.compare(0, s.size(), s) == 0 &&
+           (l.size() == s.size() || l[s.size()] == L' ');
 }
 
 // Container id ("{...}") of the physical device an HID interface belongs to, formatted like
@@ -256,6 +284,17 @@ void PollBluetooth(PollContext& ctx) {
         bool dup = false;
         for (auto& o : ctx.out) dup |= o.name == s.name;
         if (dup) continue;
+        // A headset that moved to Bluetooth leaves its 2.4 GHz adapter row behind: the adapter is still
+        // enumerated but reports connected=false, and the level now comes over the Bluetooth link.
+        // Those are two containers, so the check above cannot merge them, and the exact name misses as
+        // soon as headsetcontrol.exe's product string differs by a qualifier (SameDeviceName). Drop the
+        // offline row and add this one. Both links live at the same time keeps both rows: that is a real
+        // setup with two readings, not a leftover. The (vid, pid) stays claimed, so the HID fallback
+        // below does not bring the dropped row back.
+        auto stale = std::find_if(ctx.out.begin(), ctx.out.end(), [&](const DeviceStatus& o) {
+            return o.via == L"HeadsetControl" && !o.connected && SameDeviceName(o.name, s.name);
+        });
+        if (stale != ctx.out.end()) ctx.out.erase(stale);
         s.via = L"Bluetooth";
         s.percent = f.pct;
         auto cod = containerCod.find(cid);
