@@ -304,12 +304,19 @@ std::wstring Encode(const std::wstring& s) {
     return out;
 }
 
+// The name field promises "kept private and never shown", and this text goes into a public GitHub issue, so
+// the name must never be printed. The dialog preview and the issue body are both built from here, so the
+// rule cannot drift; the line stays (as "(kept private)") instead of vanishing, so the preview remains
+// exactly what will be sent.
+std::wstring NameLine(const std::wstring& name) {
+    return std::wstring(T(L"Your name")) + L": " +
+           (name.empty() ? std::wstring(T(L"(not sent)")) : std::wstring(T(L"(kept private)")));
+}
+
 // The text of "This is exactly what will be sent" - also the issue body.
 std::wstring RequestText(const Request& r) {
     return std::wstring(T(L"Device")) + L": " + (r.model.empty() ? std::wstring(T(L"(type the device name)")) : r.model) + L"\n" +
-           T(L"Type") + L": " + T(r.type) + L"\n" + T(L"Your name") + L": " +
-           (r.name.empty() ? std::wstring(T(L"(not sent)")) : r.name + L" " + T(L"(kept private)")) + L"\n" + T(L"Notes") + L": " +
-           r.notes;
+           T(L"Type") + L": " + T(r.type) + L"\n" + NameLine(r.name) + L"\n" + T(L"Notes") + L": " + r.notes;
 }
 
 void CopyToClipboard(const std::wstring& text);  // defined with the window helpers below
@@ -376,8 +383,7 @@ Request CurrentRequest() {
 void UpdatePreview() {
     Request r = CurrentRequest();
     std::wstring p = std::wstring(T(L"Device")) + L": " + (r.model.empty() ? std::wstring(T(L"(type the device name)")) : r.model) +
-                     L"\r\n" + T(L"Type") + L": " + T(r.type) + L"\r\n" + T(L"Your name") + L": " +
-                     (r.name.empty() ? std::wstring(T(L"(not sent)")) : r.name + L" " + T(L"(kept private)")) + L"\r\n" + T(L"Notes") + L": ";
+                     L"\r\n" + T(L"Type") + L": " + T(r.type) + L"\r\n" + NameLine(r.name) + L"\r\n" + T(L"Notes") + L": ";
     for (wchar_t ch : r.notes) p += ch == L'\n' ? std::wstring(L"\r\n") : std::wstring(1, ch);
     SetDlgItemTextW(g_wnd, IDC_PREVIEW, p.c_str());
     EnableWindow(GetDlgItem(g_wnd, IDC_SEND), DeviceChosen() && r.model.size() >= 2);
