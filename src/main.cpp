@@ -961,6 +961,7 @@ int ListToConsole(bool dump) {
         GetTempPathW(MAX_PATH, path);
         wcscat_s(path, L"WirelessBattery-dump.txt");
         HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        bool saved = false;
         if (f != INVALID_HANDLE_VALUE) {
             std::wstring crlf;
             for (wchar_t ch : text) crlf += ch == L'\n' ? std::wstring(L"\r\n") : std::wstring(1, ch);
@@ -968,16 +969,21 @@ int ListToConsole(bool dump) {
             std::string u = "\xEF\xBB\xBF" + std::string(n, 0);  // UTF-8 byte order mark, so Notepad shows it right
             WideCharToMultiByte(CP_UTF8, 0, crlf.c_str(), (int)crlf.size(), u.data() + 3, n, nullptr, nullptr);
             DWORD w;
-            WriteFile(f, u.data(), (DWORD)u.size(), &w, nullptr);
+            // A short write (disk full, quota) must not count as saved either: the whole point is to stop
+            // claiming success when the bytes did not land.
+            saved = WriteFile(f, u.data(), (DWORD)u.size(), &w, nullptr) != 0 && w == (DWORD)u.size();
             CloseHandle(f);
         }
         if (out && out != INVALID_HANDLE_VALUE) {
             write(text);
-            write(std::wstring(L"\nAlso saved to ") + path + L"\n");
-        } else {
+            // Only claim success when the bytes really landed: the same file name may still hold an older dump,
+            // and sending people to that is worse than admitting the write failed.
+            if (saved) write(std::wstring(L"\nAlso saved to ") + path + L"\n");
+            else write(std::wstring(L"\nCould not save the dump to ") + path + L"\n");
+        } else if (saved) {
             ShellExecuteW(nullptr, L"open", path, nullptr, nullptr, SW_SHOWNORMAL);  // no console: show the file
         }
-        return 0;
+        return saved ? 0 : 1;
     }
     auto list = PollAllDevices();
     if (list.empty()) write(L"No devices with battery info found.\n");
