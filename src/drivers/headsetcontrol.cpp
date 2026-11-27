@@ -226,17 +226,46 @@ DWORD WINAPI RefreshThread(LPVOID) {
     return 0;
 }
 
+// Starts one background refresh unless one is already running. Returns the thread handle (caller
+// owns it) or nullptr when a refresh is in flight or the thread could not be created.
+HANDLE StartRefresh() {
+    if (InterlockedCompareExchange(&g_running, 1, 0) != 0) return nullptr;
+    HANDLE t = CreateThread(nullptr, 0, RefreshThread, nullptr, 0, nullptr);
+    if (t) return t;
+    InterlockedExchange(&g_running, 0);
+    return nullptr;
+}
+
+// True only for the one-shot `--list` diagnostic run. main.cpp recognises the switch with the same
+// substring check, and the process is a GUI-subsystem one: it has no console window of its own, and
+// AttachConsole (what ListToConsole does when stdout is not redirected) only runs after this poll.
+// So "--list" is the signal, not GetConsoleWindow(): a redirected --list has no console at all.
+bool IsListRun() {
+    const wchar_t* cmd = GetCommandLineW();
+    return cmd && wcsstr(cmd, L"--list");
+}
+
+// How long a one-off console run (`--list`) may wait for the first result. The tray's polling thread
+// never waits: a hung or slow headsetcontrol.exe there would freeze every icon (it used to, for up
+// to 30 s on the first poll). A diagnostic command may be slow, but never unbounded.
+constexpr DWORD kFirstPollWaitMs = 5000;
+
 }  // namespace
 
 void PollHeadsetControl(PollContext& ctx) {
     if (Command().empty()) return;
     ULONGLONG now = GetTickCount64();
     if (g_updated == 0) {
-        Refresh();  // first poll: wait for it, so the first display (and --list) is complete
-    } else if (now - g_updated > 50000 && InterlockedCompareExchange(&g_running, 1, 0) == 0) {
-        HANDLE t = CreateThread(nullptr, 0, RefreshThread, nullptr, 0, nullptr);
+        // First poll: start the refresh in the background like every later poll. A one-shot --list
+        // run waits for it, but only up to kFirstPollWaitMs.
+        HANDLE t = StartRefresh();
+        if (t) {
+            if (IsListRun()) WaitForSingleObject(t, kFirstPollWaitMs);
+            CloseHandle(t);
+        }
+    } else if (now - g_updated > 50000) {
+        HANDLE t = StartRefresh();
         if (t) CloseHandle(t);
-        else InterlockedExchange(&g_running, 0);
     }
     AcquireSRWLockShared(&g_lock);
     std::vector<HscDevice> devices = g_devices;
