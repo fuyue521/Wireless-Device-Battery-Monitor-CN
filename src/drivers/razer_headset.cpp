@@ -437,7 +437,8 @@ bool V3xGet(HidDev& d, BYTE cmd, BYTE& value) {
         std::vector<BYTE> r;
         if (!d.GetFeature(0x07, r) || r.size() < 63) continue;
         if (r[2] != txid || r[7] != 0x07 || r[8] != cmd || r[6] < 2) continue;
-        if (r[1] != 0x02 && r[1] != 0x01) return false;
+        if (r[1] == 0x01) continue;  // busy: the args still carry the previous answer, so retry
+        if (r[1] != 0x02) return false;
         value = r[10];
         return true;
     }
