@@ -230,6 +230,7 @@ HICON RenderIcon(const std::wstring& text, int barPct, Rgb textColor, Rgb barCol
     const int textH = S - barH - 1;
 
     HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return nullptr;  // GDI exhausted: no icon this round, the caller keeps what it had
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bi.bmiHeader.biPlanes = 1;
@@ -242,6 +243,11 @@ HICON RenderIcon(const std::wstring& text, int barPct, Rgb textColor, Rgb barCol
     bi.bmiHeader.biHeight = -H;
     void* sbits = nullptr;
     HBITMAP scratch = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &sbits, nullptr, 0);
+    if (!scratch || !sbits) {
+        if (scratch) DeleteObject(scratch);
+        DeleteDC(dc);
+        return nullptr;
+    }
     HGDIOBJ oldBmp = SelectObject(dc, scratch);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(255, 255, 255));
@@ -251,6 +257,7 @@ HICON RenderIcon(const std::wstring& text, int barPct, Rgb textColor, Rgb barCol
     for (int fh = textH * 2; fh >= 6; fh--) {
         HFONT f = CreateFontW(-fh, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                               ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        if (!f) break;
         HGDIOBJ oldF = SelectObject(dc, f);
         SetTextCharacterExtra(dc, text.size() >= 3 ? -1 : 0);
         memset(sbits, 0, (size_t)W * H * 4);
@@ -271,6 +278,13 @@ HICON RenderIcon(const std::wstring& text, int barPct, Rgb textColor, Rgb barCol
     bi.bmiHeader.biHeight = -S;
     void* ibits = nullptr;
     HBITMAP color = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &ibits, nullptr, 0);
+    if (!color || !ibits) {
+        if (color) DeleteObject(color);
+        SelectObject(dc, oldBmp);
+        DeleteObject(scratch);
+        DeleteDC(dc);
+        return nullptr;
+    }
     auto* ip = static_cast<DWORD*>(ibits);
     memset(ip, 0, (size_t)S * S * 4);
     const int alphaScale = dim ? 140 : 255;
@@ -299,8 +313,13 @@ HICON RenderIcon(const std::wstring& text, int barPct, Rgb textColor, Rgb barCol
     DeleteDC(dc);
 
     HBITMAP mask = CreateBitmap(S, S, 1, 1, nullptr);
+    HDC mdc = mask ? CreateCompatibleDC(nullptr) : nullptr;
+    if (!mdc) {  // no DC (or no mask) to blacken it with: give up on this icon instead of handing over garbage
+        if (mask) DeleteObject(mask);
+        DeleteObject(color);
+        return nullptr;
+    }
     {
-        HDC mdc = CreateCompatibleDC(nullptr);
         HGDIOBJ o = SelectObject(mdc, mask);
         PatBlt(mdc, 0, 0, S, S, BLACKNESS);
         SelectObject(mdc, o);
@@ -410,9 +429,15 @@ void ApplyEntry(TrayEntry& e) {
     std::wstring sig = std::to_wstring(shown) + (s.charging ? L"c" : L"") + (dim ? L"d" : L"") + (g_lightTaskbar ? L"l" : L"k") +
                        L"a" + std::to_wstring((int)accent);
     if (sig != e.iconSig || !e.icon) {
-        if (e.icon) DestroyIcon(e.icon);
-        e.icon = IconFor(shown, s.charging, dim, accent);
-        e.iconSig = sig;
+        HICON fresh = IconFor(shown, s.charging, dim, accent);
+        if (fresh) {
+            if (e.icon) DestroyIcon(e.icon);
+            e.icon = fresh;
+            e.iconSig = sig;
+        } else if (!e.icon) {
+            return;  // nothing to draw with (GDI exhausted) and nothing to fall back on: retry on the next tick
+        }
+        // A failed render with an icon already on screen keeps the old one and tries again next tick.
     }
     std::wstring tip = s.name + L"\n" + StatusText(e);
 

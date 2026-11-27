@@ -292,14 +292,25 @@ struct Mask {
 Mask RenderMask(const std::wstring& s, HFONT font, bool darkOnLight) {
     Mask m;
     HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return m;  // GDI exhausted: draw nothing rather than memcpy into a null bitmap
     HGDIOBJ of = SelectObject(dc, font);
-    SIZE sz;
-    GetTextExtentPoint32W(dc, s.c_str(), (int)s.size(), &sz);
+    SIZE sz{};
+    if (!GetTextExtentPoint32W(dc, s.c_str(), (int)s.size(), &sz) || sz.cx <= 0 || sz.cy <= 0) {
+        SelectObject(dc, of);
+        DeleteDC(dc);
+        return m;
+    }
     int W = sz.cx + 8, H = sz.cy + 8;
     BITMAPINFO bi{};
     bi.bmiHeader = { sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB };
     void* bits = nullptr;
     HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bmp || !bits) {
+        if (bmp) DeleteObject(bmp);
+        SelectObject(dc, of);
+        DeleteDC(dc);
+        return m;
+    }
     HGDIOBJ ob = SelectObject(dc, bmp);
     memset(bits, darkOnLight ? 0xFF : 0x00, (size_t)W * H * 4);
     SetBkMode(dc, TRANSPARENT);
@@ -780,11 +791,17 @@ void PaintStrip(HWND wnd, HWND taskbar, bool hover, SIZE& size) {
     }
 
     HDC screen = GetDC(nullptr);
-    HDC mem = CreateCompatibleDC(screen);
+    HDC mem = screen ? CreateCompatibleDC(screen) : nullptr;
     BITMAPINFO bi{};
     bi.bmiHeader = { sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB };
     void* bits = nullptr;
-    HBITMAP bmp = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HBITMAP bmp = mem ? CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    if (!mem || !bmp || !bits) {  // GDI exhausted: skip this frame and let the 1 s timer try again
+        if (bmp) DeleteObject(bmp);
+        if (mem) DeleteDC(mem);
+        if (screen) ReleaseDC(nullptr, screen);
+        return;
+    }
     memcpy(bits, cv.px.data(), (size_t)W * H * 4);
     HGDIOBJ ob = SelectObject(mem, bmp);
     size = { W, H };
