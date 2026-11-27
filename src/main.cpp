@@ -810,13 +810,27 @@ DWORD WINAPI Worker(LPVOID) {
     // At sign-in a USB receiver may enumerate before its wireless link is ready.
     constexpr DWORD startupPollDelays[] = { 3000, 7000, 15000 };
     size_t startupPoll = 0;
-    HANDLE events[2] = { g_stopEvt, g_refreshEvt };
     for (;;) {
         auto* v = new std::vector<DeviceStatus>(g_demo ? DemoDevices() : PollAllDevices());
         if (!PostMessageW(g_hwnd, WM_RESULTS, 0, (LPARAM)v)) delete v;
         DWORD delay = POLL_INTERVAL_MS;
         if (startupPoll < ARRAYSIZE(startupPollDelays)) delay = startupPollDelays[startupPoll++];
-        if (WaitForMultipleObjects(2, events, FALSE, delay) == WAIT_OBJECT_0) return 0;
+        // CreateEventW returns NULL when handles are scarce, and passing NULL to WaitForMultipleObjects makes it
+        // fail immediately: this loop would then spin at full speed and flood WM_RESULTS. Only real handles
+        // enter the array, and the mapping is explicit: "stop" takes slot 0 when it exists, "refresh" takes the
+        // next free slot, so WAIT_OBJECT_0 means "stop" only when hasStop is true.
+        const bool hasStop = g_stopEvt != nullptr;
+        const bool hasRefresh = g_refreshEvt != nullptr;
+        HANDLE events[2] = {};
+        int slots = 0;
+        if (hasStop) events[slots++] = g_stopEvt;
+        if (hasRefresh) events[slots++] = g_refreshEvt;
+        if (slots == 0) {  // nothing to wait on: keep the polling cadence instead of spinning
+            Sleep(delay);
+            continue;
+        }
+        const DWORD wait = WaitForMultipleObjects((DWORD)slots, events, FALSE, delay);
+        if (hasStop && wait == WAIT_OBJECT_0) return 0;
     }
 }
 
@@ -1011,7 +1025,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_demo = cmdLine && wcsstr(cmdLine, L"--demo");
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\WirelessBatteryTray");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) return 0;  // NULL: no guard, but keep running
 
     g_lightTaskbar = ReadLightTaskbar();
     ApplyMenuTheme(g_lightTaskbar);
@@ -1029,8 +1043,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     DEV_BROADCAST_DEVICEINTERFACE_W filter{ sizeof(filter) };
     filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
     filter.dbcc_classguid = GUID_DEVINTERFACE_HID;
+    // NULL only costs plug/unplug refreshes (no DBT_DEVICEARRIVAL); the 60 s poll still covers those.
     HDEVNOTIFY notify = RegisterDeviceNotificationW(g_hwnd, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
 
+    // NULL is possible when handles are scarce; Worker copes by sleeping on its timer instead of spinning.
     g_refreshEvt = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_stopEvt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_wantWidget = LoadWidgetMode();
@@ -1062,6 +1078,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     while (PeekMessageW(&m, nullptr, WM_RESULTS, WM_RESULTS, PM_REMOVE)) delete reinterpret_cast<std::vector<DeviceStatus>*>(m.lParam);
     if (notify) UnregisterDeviceNotification(notify);
     if (g_worker) CloseHandle(g_worker);
-    ReleaseMutex(mutex);
+    if (mutex) ReleaseMutex(mutex);
     return 0;
 }
