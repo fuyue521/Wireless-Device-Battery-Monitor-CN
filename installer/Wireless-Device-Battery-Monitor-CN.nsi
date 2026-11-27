@@ -1,4 +1,4 @@
-; 无线设备电量监视器 CN —— NSIS 安装脚本
+﻿; 无线设备电量监视器 CN —— NSIS 安装脚本
 ; 生成：dist\Wireless-Device-Battery-Monitor-CN-Setup-<版本>.exe
 ; 免管理员、按用户安装（与上游安装器一致）。
 

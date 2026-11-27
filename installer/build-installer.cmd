@@ -53,7 +53,9 @@ if not defined APPVER (
 
 if not exist "dist" mkdir "dist"
 echo [2/2] Running makensis ...
-makensis "installer\Wireless-Device-Battery-Monitor-CN.nsi"
+rem -INPUTCHARSET UTF8 pins the source encoding: makensis 3 otherwise decodes the .nsi with the
+rem system ANSI code page and the Simplified-Chinese strings turn into mojibake.
+makensis -INPUTCHARSET UTF8 "installer\Wireless-Device-Battery-Monitor-CN.nsi"
 if errorlevel 1 exit /b 1
 
 echo.

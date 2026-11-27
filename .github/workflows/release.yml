@@ -67,7 +67,9 @@ jobs:
       # NSIS writes to ..\dist relative to the script, so dist must exist (created above).
       - name: Build installer (NSIS)
         shell: msys2 {0}
-        run: makensis installer/Wireless-Device-Battery-Monitor-CN.nsi
+        # -INPUTCHARSET UTF8: makensis 3 defaults to the runner's ANSI code page (CP1252 on Windows
+        # runners) and would turn the Simplified-Chinese strings into mojibake without it.
+        run: makensis -INPUTCHARSET UTF8 installer/Wireless-Device-Battery-Monitor-CN.nsi
 
       - name: Build portable zip
         shell: pwsh
