@@ -11,6 +11,7 @@
 #include "devices.h"
 
 struct WidgetItem {
+    std::wstring key;        // stable identity from DeviceStatus::key: the strip follows this, not a position
     DeviceKind kind = DeviceKind::Other;
     int  percent  = -1;     // -1 = unknown
     std::wstring text;      // shown instead of the percentage when set (coarse levels like "Low")
