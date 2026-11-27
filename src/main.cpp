@@ -758,14 +758,19 @@ void ShowMenu() {
     GetCursorPos(&pt);
     SetForegroundWindow(g_hwnd);
     // TrackPopupMenu anchors the menu at the pointer and turns it upside down when it does not fit below the
-    // screen edge; after that flip the last item ("Exit") sits right under the still pointer, and a second
-    // click there quits the program - which looks like a crash. Excluding the pointer's own few pixels makes
-    // Windows place the menu on one side of that box instead of over it, so a click without moving lands
-    // outside the menu (or on the first item when the menu opens downwards, as before). No height estimate:
-    // the shell does the layout, so this holds at any DPI and on any taskbar edge.
+    // screen edge; after that flip the last item ("Exit") sits right under the still pointer, and a click that
+    // slips 2-5 px lands on it and quits the program - which looks like a crash. A pointer-sized exclusion is
+    // not enough: the shell then just nudges the menu sideways and it still hugs the pointer. The box below
+    // spans the whole monitor and two menu-bar rows ABOVE the pointer (one row is not enough - SM_CYMENU is
+    // ~30 px at 150% while a popup row is ~35 px), so the only way to avoid it is to open upwards with a full
+    // row of clearance; downwards the menu still starts at the pointer, unchanged. The shell still decides;
+    // nothing here estimates the menu's own height.
+    const int rowH = GetSystemMetricsForDpi(SM_CYMENU, GetDpiForWindow(g_hwnd));
+    MONITORINFO mi{ sizeof(mi) };
+    const RECT mon = GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi) ? mi.rcMonitor : RECT{ 0, 0, 0, 0 };
     TPMPARAMS tpm{};
     tpm.cbSize = sizeof(tpm);
-    tpm.rcExclude = { pt.x, pt.y, pt.x + 2, pt.y + 2 };
+    tpm.rcExclude = { mon.left, pt.y - 2 * rowH, mon.right, pt.y };
     UINT cmd = TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | (i18n::Rtl() ? TPM_LAYOUTRTL : 0),
                                 pt.x, pt.y, g_hwnd, &tpm);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
