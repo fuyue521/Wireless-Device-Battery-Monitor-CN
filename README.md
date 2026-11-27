@@ -161,7 +161,7 @@ build.bat
 
 ```bash
 make          # 编译
-make test     # 编译并运行 20 个单元测试（协议字节解析等）
+make test     # 编译并运行 24 个单元测试（协议字节解析等）
 make clean
 ```
 
@@ -180,6 +180,35 @@ installer\build-installer.cmd
 
 安装脚本 `installer/Wireless-Device-Battery-Monitor-CN.nsi` 使用 NSIS 3.x（`winget install NSIS.NSIS`），中文界面、`RequestExecutionLevel user`、LZMA 压缩。
 
+## 持续集成与发布
+
+GitHub Actions 承担全部构建与打包，本地只需要工具链用来验证改动：
+
+| 工作流 | 触发 | 做什么 |
+| --- | --- | --- |
+| `ci.yml` | push 到 main、PR、手动 | 秒级静态检查 + Windows 上编译、跑 24 个单元测试、`--list` 冒烟 |
+| `release.yml` | 推送 `v*` 标签、手动试跑 | 校验 tag 与版本号 → 编译 → 测试 → NSIS 安装包 + 便携 zip + 对应源码 → `SHA256SUMS.txt` → 发布 Release |
+| `pr-safety.yml` | 外部 PR | 扫描网络访问、启动程序、写文件等危险改动，结果只作提示，不阻断合并 |
+
+`ci.yml` 里那组静态检查也能在本地跑，改动词条或版本号前建议先执行：
+
+```bash
+bash scripts/check-version.sh        # 安装脚本、res/app.rc 与资源字符串里的版本号是否一致
+python3 scripts/check-lang.py        # 13 份 lang/*.txt 的键、占位符是否与 _template.txt 对齐
+```
+
+`make test` 以 `tests/*_test.cpp` 为准：新增测试文件却忘了写进 `Makefile` 的 `test` 目标时，它会直接失败而不是悄悄跳过。
+
+发布新版本（版本号共四处，`scripts/check-version.sh` 会一起校验）：
+
+```bash
+# 1) installer/*.nsi 的 APP_VERSION、res/app.rc 的 FILEVERSION/PRODUCTVERSION 与下面两个字符串
+# 2) 提交后打标签并推送，release.yml 自动打包发布
+git tag v1.0.7 && git push origin v1.0.7
+```
+
+被打上标签的提交如果版本号还是旧的，`release.yml` 会在编译前就停下；打包完成后 `dist/` 里还会多一份 `SHA256SUMS.txt`，可用于核对下载到的安装包。
+
 ## 目录结构
 
 ```
@@ -188,7 +217,7 @@ Wireless-Device-Battery-Monitor-CN/
 │  └─ drivers/          72 个厂商驱动（只读电量协议）
 ├─ lang/                13 种语言词条（zh-CN.txt 为中文）
 ├─ res/                 图标、清单、版本资源
-├─ tests/               20 个单元测试
+├─ tests/               24 个单元测试
 ├─ installer/           NSIS 安装脚本 + 构建脚本 + 第三方声明
 ├─ docs/                截图与协议笔记
 ├─ linux/              实验性 Linux 版（GTK4 托盘）

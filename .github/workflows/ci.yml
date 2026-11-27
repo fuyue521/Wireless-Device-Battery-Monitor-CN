@@ -1,8 +1,9 @@
 name: ci
 
-# Fast check: does it compile and do the unit tests pass? No packaging, no downloads, no network.
-# Packages (installer, portable zip) are built only for release tags, see release.yml.
-# Documentation-only pushes are ignored so a README fix does not queue a 3-minute build.
+# Fast check: does it compile, do the unit tests pass, and do the version number and the translations
+# still line up? No packaging, no downloads, no network. Packages (installer, portable zip) are built
+# only for release tags, see release.yml.
+# Documentation-only pushes are ignored so a README fix does not queue a build.
 
 on:
   push:
@@ -24,6 +25,33 @@ permissions:
   contents: read
 
 jobs:
+  # Runs in seconds and needs no toolchain, so a broken translation or a half-bumped version is
+  # reported while the Windows build is still compiling.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The version names the installer, the file properties and the release; release.yml runs the
+      # same script with the tag before it packages anything.
+      - name: Version is the same in the installer, res/app.rc and the resource strings
+        run: bash scripts/check-version.sh
+
+      # A missing key or a dropped {placeholder} is invisible at runtime (the app quietly falls back
+      # to English), so the thirteen lang/ files are compared against lang/_template.txt here.
+      - name: Every language matches lang/_template.txt
+        run: python3 scripts/check-lang.py
+
+      - name: No build output is committed
+        run: |
+          tracked=$(git ls-files '*.exe' '*.o' '*.dll' '*.zip' 'dist/*' 'build/*' | head -n 20)
+          if [ -n "$tracked" ]; then
+            echo "error: build output is tracked by git:" >&2
+            echo "$tracked" >&2
+            exit 1
+          fi
+
   build:
     runs-on: windows-latest
     timeout-minutes: 25
@@ -38,12 +66,37 @@ jobs:
 
       - name: Build WirelessBattery.exe
         shell: msys2 {0}
-        # 89 translation units: build them in parallel instead of one after another.
+        # 86 translation units: build them in parallel instead of one after another.
         run: make -j"$(nproc)"
 
+      # windres compiles res/app.rc into the exe. If that ever stops happening, the file properties
+      # and the installer would disagree with the sources, so read the built file back.
+      - name: The built exe carries the version from res/app.rc
+        shell: pwsh
+        run: |
+          $app = (Select-String -Path 'installer/*.nsi' -Pattern '^\s*!define\s+APP_VERSION\s+"([^"]+)"').Matches[0].Groups[1].Value
+          $info = (Get-Item .\WirelessBattery.exe).VersionInfo
+          if ($info.FileVersion -ne $app) { throw "exe FileVersion is $($info.FileVersion), APP_VERSION is $app" }
+          if ($info.ProductVersion -ne $app) { throw "exe ProductVersion is $($info.ProductVersion), APP_VERSION is $app" }
+          Write-Host "WirelessBattery.exe reports version $app"
+
+      # The recipe fails if a tests/*.cpp file has no line of its own, so a new test cannot be
+      # written and then quietly never run.
       - name: Run unit tests
         shell: msys2 {0}
         run: make test
+
+      # A fresh runner has no battery devices, so this only proves the windowed binary starts, polls
+      # and exits cleanly instead of crashing on an empty machine (and that --list writes to stdout).
+      - name: Smoke test (--list on a machine without devices)
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'list.txt'
+          $p = Start-Process -FilePath '.\WirelessBattery.exe' -ArgumentList '--list' `
+                             -RedirectStandardOutput $out -Wait -PassThru
+          if (Test-Path $out) { Get-Content $out -Encoding utf8 }
+          if (-not (Test-Path $out)) { throw '--list produced no output' }
+          if ($p.ExitCode -ne 0) { throw "--list exited with $($p.ExitCode)" }
 
       # Only the executable is kept: enough to download and try a pull request build.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

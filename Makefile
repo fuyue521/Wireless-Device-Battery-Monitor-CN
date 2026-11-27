@@ -30,6 +30,7 @@ clean:
 
 test:
 	@mkdir -p build
+	@rm -f build/*_test.exe
 	$(CXX) $(CXXFLAGS) tests/astro_driver_test.cpp src/drivers/astro.cpp -o build/astro_driver_test.exe
 	./build/astro_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/steelseries_mouse_test.cpp src/drivers/steelseries.cpp -o build/steelseries_mouse_test.exe
@@ -70,5 +71,26 @@ test:
 	./build/labels_test.exe
 	$(CXX) $(CXXFLAGS) tests/brands_test.cpp src/brands.cpp -o build/brands_test.exe
 	./build/brands_test.exe
+	$(CXX) $(CXXFLAGS) tests/arbiter_driver_test.cpp src/drivers/arbiter.cpp src/drivers/lamzu.cpp -o build/arbiter_driver_test.exe
+	./build/arbiter_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/dareu_driver_test.cpp src/drivers/dareu.cpp -o build/dareu_driver_test.exe
+	./build/dareu_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/semico_driver_test.cpp src/drivers/semico.cpp -o build/semico_driver_test.exe
+	./build/semico_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/steelseries_driver_test.cpp src/drivers/steelseries.cpp -o build/steelseries_driver_test.exe
+	./build/steelseries_driver_test.exe
+	@# tests/ is the source of truth: the runs above start from an empty build/*_test.exe, so any test
+	@# file without a line in this recipe is caught here instead of silently never running. linux_hid
+	@# is skipped because it needs the Linux shim in src/linux, which this toolchain does not build.
+	@built=$$(cd build && ls *_test.exe 2>/dev/null | sed 's/\.exe$$//' | sort | tr '\n' ' '); \
+	 want=$$(ls tests/*_test.cpp | sed 's|^tests/||; s|\.cpp$$||' | grep -v '^linux_hid_test$$' | sort | tr '\n' ' '); \
+	 if [ "$$built" != "$$want" ]; then \
+	   echo "test: tests/ and this recipe disagree" >&2; \
+	   echo "  ran:   $$built" >&2; \
+	   echo "  files: $$want" >&2; \
+	   echo "  add the missing test to the 'test' target (and to README's test count)" >&2; \
+	   exit 1; \
+	 fi; \
+	 echo "test: $$(echo $$built | wc -w) tests passed"
 
 .PHONY: clean test
