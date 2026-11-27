@@ -33,6 +33,21 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # makensis 3 only decodes the .nsi as UTF-8 when it starts with a BOM. Without one it falls
+      # back to the runner's ANSI code page and every Simplified-Chinese string becomes mojibake,
+      # which only shows up in the built installer, so the source bytes are checked here.
+      - name: The installer script starts with a UTF-8 BOM
+        run: |
+          status=0
+          for f in installer/*.nsi; do
+            prefix=$(head -c 3 "$f" | od -An -tx1 | tr -d ' \n')
+            if [ "$prefix" != "efbbbf" ]; then
+              echo "error: $f is not UTF-8 with BOM (first bytes: $prefix)" >&2
+              status=1
+            fi
+          done
+          exit $status
+
       # The version names the installer, the file properties and the release; release.yml runs the
       # same script with the tag before it packages anything.
       - name: Version is the same in the installer, res/app.rc and the resource strings
